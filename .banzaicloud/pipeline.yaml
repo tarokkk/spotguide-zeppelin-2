@@ -1,0 +1,138 @@
+cluster:
+  cloud: google
+  location: europe-west3-a
+  name: tarokkkpgrl
+  postHooks:
+    InstallLogging:
+      bucketName: test-logging-tarokkk
+      secretId: c8f9c9fc3835b9a3721165afea97ffb78e1375552ab112ed54aee30b29c962ae
+    InstallMonitoring:
+      enabled: true
+  properties:
+    gke:
+      master:
+        version: "1.10"
+      nodePools:
+        pool1:
+          autoscaling: true
+          count: 1
+          instanceType: n1-standard-4
+          maxCount: 2
+          minCount: 1
+          preemptible: true
+        pool2:
+          autoscaling: true
+          count: 1
+          instanceType: n1-standard-4
+          maxCount: 2
+          minCount: 1
+          preemptible: true
+        system:
+          autoscaling: true
+          count: 1
+          instanceType: n1-standard-2
+          maxCount: 2
+          minCount: 1
+      nodeVersion: "1.10"
+      projectId: paas-dev1
+  secretId: c8f9c9fc3835b9a3721165afea97ffb78e1375552ab112ed54aee30b29c962ae
+pipeline:
+  install_history_server_bucket_secrets:
+    action: InstallSecret
+    clusterSecret:
+      convertToPreferredFormat: true
+      merge: true
+      name: null
+      namespace: default
+      spec: []
+    image: banzaicloud/ci-pipeline-client:0.8
+  install_history_server_auth_secrets:
+    image: banzaicloud/ci-pipeline-client:0.8
+    action: InstallSecret
+    clusterSecret:
+      name: null
+      namespace: default
+      merge: true
+      spec: []
+  install_zeppelin_auth_secrets:
+    action: InstallSecret
+    clusterSecret:
+      merge: true
+      name: zeppelinpass
+      namespace: default
+      spec: []
+    image: banzaicloud/ci-pipeline-client:0.8
+  package_application:
+    image: lachlanevenson/k8s-helm:latest
+    commands:
+    - helm init -c
+    - helm package ./.banzaicloud/charts/spotguide-zeppelin
+  deploy_application:
+    action: EnsureDeployment
+    deployment:
+      name: ./spotguide-zeppelin-1.0.0.tgz
+      releaseName: '{{ .CICD_REPO_NAME }}'
+      values:
+        banzaicloud:
+          secret:
+            zeppelin:
+              name: zeppelinpass
+        historyServer:
+          enabled: false
+        zeppelin-spark:
+          spark:
+            monitoring:
+              enabled: true
+              jmxCollector: |
+                lowercaseOutputName: false
+                lowercaseOutputLabelNames: false
+                whitelistObjectNames: ["*:*"]
+              metricsProperties: |
+                # Enable Prometheus for all instances by class name
+                *.sink.prometheus.class=com.banzaicloud.spark.metrics.sink.PrometheusSink
+                # Prometheus pushgateway address
+                *.sink.prometheus.pushgateway-address=prometheus-pushgateway.pipeline-system:9091
+                *.sink.prometheus.pushgateway-enable-timestamp=true
+                *.sink.prometheus.enable-dropwizard-collector=false
+                *.sink.prometheus.enable-jmx-collector=true
+                *.sink.prometheus.jmx-collector-config=/opt/spark/conf/monitoring/jmxCollector.yaml
+                *.sink.jmx.class=org.apache.spark.metrics.sink.JmxSink
+                # Enable JVM metrics source for all instances by class name
+                *.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+            spark-hs:
+              ingress:
+                annotations:
+                  ingress.kubernetes.io/ssl-redirect: "true"
+                  kubernetes.io/ingress.class: traefik
+                  traefik.frontend.rule.type: PathPrefixStrip
+                  traefik.ingress.kubernetes.io/auth-secret: null
+                  traefik.ingress.kubernetes.io/auth-type: basic
+                enabled: true
+                hosts:
+                - shs-{{.CICD_REPO_NAME}}.{{.CLUSTER_NAME}}.{{.ORG_NAME}}.{{.DOMAIN_NAME}}
+              sparkEventLogStorage:
+                azureStorageAccountName: null
+                cloudProvider: null
+                logDirectory: null
+                secretName: null
+          zeppelin:
+            image:
+              tag: v0.9.0-k8s-1.0.76
+            ingress:
+              annotations:
+                ingress.kubernetes.io/ssl-redirect: "true"
+                kubernetes.io/ingress.class: traefik
+                traefik.frontend.rule.type: PathPrefixStrip
+              baseUrl: null
+              enabled: true
+              hosts:
+              - zeppelin-{{.CICD_REPO_NAME}}.{{.CLUSTER_NAME}}.{{.ORG_NAME}}.{{.DOMAIN_NAME}}
+            sparkEventLogStorage:
+              cloudProvider: null
+              logDirectory: null
+              secretName: null
+            sparkSubmitOptions:
+              sparkImage:
+                tag: v0.9.0-k8s-1.0.76
+            userCredentialSecretName: zeppelinpass
+    image: banzaicloud/ci-pipeline-client:0.8
